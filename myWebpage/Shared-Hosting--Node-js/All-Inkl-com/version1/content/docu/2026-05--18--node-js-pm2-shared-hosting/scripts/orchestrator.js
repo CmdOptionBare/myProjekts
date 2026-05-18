@@ -7,16 +7,14 @@
  * Graceful shutdown (SIGTERM + 30s drain) preserves active connections.
  */
 
-const { exec, execSync } = require("child_process");
+const { execSync } = require("child_process");
 const http = require("http");
 const fs = require("fs");
-const path = require("path");
 
 // --- Configuration ---
 const WEBROOT    = "/www/htdocs/ACCOUNT_ID/DEINE-DOMAIN";
 const APPDIR     = WEBROOT + "/app/.next/standalone";
 const PM2        = "/www/htdocs/ACCOUNT_ID/nodejs_current/bin/pm2";
-const NODE       = "/www/htdocs/ACCOUNT_ID/nodejs_current/bin/node";
 const HOME       = "/www/htdocs/ACCOUNT_ID";
 const ENV_PREFIX = "export HOME=" + HOME + "; export PATH=/www/htdocs/ACCOUNT_ID/nodejs_current/bin:$PATH; ";
 
@@ -41,8 +39,21 @@ function log(msg) {
   );
 }
 
-function pm2cmd(cmd) {
-  return execSync(ENV_PREFIX + PM2 + " " + cmd + " 2>&1").toString().trim();
+function pm2start(name, port) {
+  const cmd = ENV_PREFIX + "PORT=" + port + " HOSTNAME=127.0.0.1 " + PM2 + " start " + APPDIR + "/server.js --name " + name + " --kill-timeout 30000 2>&1";
+  return execSync(cmd).toString().trim();
+}
+
+function pm2stop(name) {
+  try { execSync(ENV_PREFIX + PM2 + " stop " + name + " --silent 2>/dev/null; true"); } catch (_) {}
+}
+
+function pm2delete(name) {
+  try { execSync(ENV_PREFIX + PM2 + " delete " + name + " --silent 2>/dev/null; true"); } catch (_) {}
+}
+
+function pm2save() {
+  try { execSync(ENV_PREFIX + PM2 + " save --force --silent 2>/dev/null; true"); } catch (_) {}
 }
 
 function checkPort(port, cb) {
@@ -68,16 +79,11 @@ function ensureStarted() {
     if (alive) {
       log("Instance " + activeName + " is already responding. Scheduling rotation.");
     } else {
-      log("Instance " + activeName + " not responding. Starting it now.");
+      log("Instance " + activeName + " not responding. Starting it now on port " + activePort);
+      pm2delete(activeName);
       try {
-        pm2cmd("delete " + activeName + " --silent 2>/dev/null; true");
-      } catch (_) {}
-      try {
-        pm2cmd("start " + APPDIR + "/server.js" +
-          " --name " + activeName +
-          " --env production" +
-          " -- --port " + activePort);
-        log("Started " + activeName);
+        pm2start(activeName, activePort);
+        log("Started " + activeName + " on port " + activePort);
       } catch (e) {
         log("ERROR starting " + activeName + ": " + e.message);
       }
@@ -97,15 +103,9 @@ function rotate() {
   log("ROTATION START: " + outgoingName + ":" + outgoingPort + " -> " + incomingName + ":" + incomingPort);
 
   // 1. Start incoming instance
+  pm2delete(incomingName);
   try {
-    pm2cmd("delete " + incomingName + " --silent 2>/dev/null; true");
-  } catch (_) {}
-  try {
-    pm2cmd("start " + APPDIR + "/server.js" +
-      " --name " + incomingName +
-      " --env production" +
-      " --kill-timeout 30000" +
-      " -- --port " + incomingPort);
+    pm2start(incomingName, incomingPort);
     log("Started incoming instance " + incomingName + " on port " + incomingPort);
   } catch (e) {
     log("ERROR: Could not start " + incomingName + ": " + e.message + ". Keeping current instance.");
@@ -118,7 +118,7 @@ function rotate() {
   function waitForReady() {
     if (Date.now() > deadline) {
       log("WARN: " + incomingName + " did not become healthy in time. Aborting rotation, keeping " + outgoingName);
-      try { pm2cmd("delete " + incomingName + " --silent"); } catch (_) {}
+      pm2delete(incomingName);
       setTimeout(rotate, ROTATE_INTERVAL_MS);
       return;
     }
@@ -138,9 +138,9 @@ function rotate() {
       // 4. Graceful drain: give outgoing instance 30s to finish open connections
       setTimeout(() => {
         log("Drain complete. Stopping outgoing instance " + outgoingName);
-        try { pm2cmd("stop " + outgoingName + " --silent"); } catch (_) {}
-        try { pm2cmd("delete " + outgoingName + " --silent"); } catch (_) {}
-        try { pm2cmd("save --force"); } catch (_) {}
+        pm2stop(outgoingName);
+        pm2delete(outgoingName);
+        pm2save();
         log("ROTATION COMPLETE. Active: " + incomingName + ":" + incomingPort);
         setTimeout(rotate, ROTATE_INTERVAL_MS);
       }, DRAIN_TIMEOUT_MS);
