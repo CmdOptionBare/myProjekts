@@ -166,7 +166,7 @@ if ($mode === "emergency") {
     $out .= "--- PM2 PROZESSE ---\n" . trim($pm2List) . "\n\n";
     $out .= "--- LETZTE 20 WATCHDOG LOGS ---\n" . trim($lastLogs) . "\n";
 
-    sendNtfyPush($ntfyTopic, "📱 Log-Abfrage per iOS Kurzbefehl", "Systembericht wurde erfolgreich generiert und übertragen.", "high", "mag,iphone,page_facing_up");
-    echo $out;
+    sendNtfyPush($ntfyTopic, "📱 On-Demand System-Log", $out, "high", "mag,iphone,page_facing_up");
+    echo "Status: OK - Notification sent\n";
 }
 ?>
