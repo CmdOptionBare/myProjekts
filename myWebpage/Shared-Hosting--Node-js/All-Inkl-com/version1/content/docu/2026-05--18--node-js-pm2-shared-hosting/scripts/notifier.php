@@ -1,19 +1,28 @@
 <?php
 /**
- * Asynchronous SMTP Notifier for DEINE-DOMAIN
- * =======================================================
- * Handles Urgent Emergency Alerts and Daily Watchdog Summaries.
- * Executed asynchronously in the background via CLI by cron_pm2.php.
+ * Asynchronous SMTP & NTFY Notifier for DEINE-DOMAIN
+ * ==============================================================
+ * Handles Urgent Emergency Alerts, Daily Summaries, and iOS Shortcuts Webhook.
  */
 
+$ntfyTopic  = "GEHEIMES_NTFY_TOPIC";
+$webhookKey = "GEHEIMER_WEBHOOK_KEY";
+
+$mode = "";
 if (php_sapi_name() !== "cli") {
-    http_response_code(403);
-    die("Forbidden - CLI execution only\n");
+    // HTTP Webhook verification for Apple Shortcuts
+    $reqKey = isset($_GET["key"]) ? $_GET["key"] : "";
+    if ($reqKey !== $webhookKey) {
+        http_response_code(403);
+        die("Forbidden - Invalid Webhook Key\n");
+    }
+    $mode = isset($_GET["mode"]) ? $_GET["mode"] : "";
+} else {
+    $mode = isset($argv[1]) ? $argv[1] : "";
 }
 
-$mode = isset($argv[1]) ? $argv[1] : "";
-if ($mode !== "emergency" && $mode !== "daily") {
-    die("Usage: php notifier.php [emergency|daily]\n");
+if ($mode !== "emergency" && $mode !== "daily" && $mode !== "hook_logs") {
+    die("Usage CLI: php notifier.php [emergency|daily]\nUsage Webhook: ?key=SECRET&mode=hook_logs\n");
 }
 
 $webroot = "/www/htdocs/ACCOUNT_ID/DEINE-DOMAIN";
@@ -79,8 +88,28 @@ function sendSmtpMail($to, $subject, $message, $isUrgent = false) {
     return true;
 }
 
+function sendNtfyPush($topic, $title, $message, $priority = "default", $tags = "") {
+    $url = "https://ntfy.sh/" . $topic;
+    $headers = [
+        "Title: " . $title,
+        "Priority: " . $priority
+    ];
+    if ($tags) {
+        $headers[] = "Tags: " . $tags;
+    }
+    
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $message);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    $res = curl_exec($ch);
+    curl_close($ch);
+    return $res;
+}
+
 if ($mode === "emergency") {
-    // Throttling: max 1 Notfall-Mail pro 15 Minuten
     $throttleFile = $logDir . "/last_emergency_mail.ts";
     if (file_exists($throttleFile) && (time() - filemtime($throttleFile)) < 900) {
         die("Emergency email throttled (last sent < 15m ago)\n");
@@ -100,6 +129,7 @@ if ($mode === "emergency") {
     $msg .= "--- Letzte Watchdog Logs ---\n" . $lastLogs . "\n";
 
     sendSmtpMail("EMPFAENGER@EMAIL.COM", $subject, $msg, true);
+    sendNtfyPush($ntfyTopic, "🚨 Systemausfall: Neustart eingeleitet", "Beide Node.js Ports tot. KAS-Watchdog hat Notfall-Wiederherstellung ausgeführt.", "urgent", "rotating_light,skull");
     echo "Emergency notification sent.\n";
 } elseif ($mode === "daily") {
     $pm2List = shell_exec($env . "/www/htdocs/ACCOUNT_ID/nodejs_current/bin/pm2 list 2>&1");
@@ -113,16 +143,30 @@ if ($mode === "emergency") {
             if (strpos($line, "EMERGENCY") !== false) $totalEmergencies++;
         }
     }
+    $stab = ($totalChecks > 0 ? round((($totalChecks - $totalEmergencies) / $totalChecks) * 100, 2) : 100);
 
     $subject = "[DAILY REPORT] DEINE-DOMAIN - Watchdog Zusammenfassung " . $today;
     $msg  = "TÄGLICHER SYSTEM-BERICHT (" . $today . ")\n";
     $msg .= "========================================\n";
     $msg .= "Durchgeführte Überprüfungen: " . $totalChecks . " (minütlich)\n";
     $msg .= "Erfasste Notfall-Neustarts: " . $totalEmergencies . "\n";
-    $msg .= "Systemstabilität: " . ($totalChecks > 0 ? round((($totalChecks - $totalEmergencies) / $totalChecks) * 100, 2) : 100) . "%\n\n";
+    $msg .= "Systemstabilität: " . $stab . "%\n\n";
     $msg .= "--- Aktueller PM2 Status ---\n" . $pm2List . "\n";
 
     sendSmtpMail("EMPFAENGER@EMAIL.COM", $subject, $msg, false);
+    sendNtfyPush($ntfyTopic, "📊 Tagesbericht (" . $today . ")", "Stabilität: " . $stab . "% (" . $totalChecks . " Prüfungen, " . $totalEmergencies . " Notfälle). System läuft stabil.", "default", "bar_chart,white_check_mark");
     echo "Daily summary sent.\n";
+} elseif ($mode === "hook_logs") {
+    header("Content-Type: text/plain; charset=UTF-8");
+    $pm2List = shell_exec($env . "/www/htdocs/ACCOUNT_ID/nodejs_current/bin/pm2 list 2>&1");
+    $lastLogs = file_exists($logFile) ? trim(shell_exec("tail -n 20 " . escapeshellarg($logFile))) : "Keine Logdatei gefunden.";
+
+    $out  = "=== ON-DEMAND SYSTEM-BERICHT ===\n";
+    $out .= "Datum: " . date("Y-m-d H:i:s") . "\n\n";
+    $out .= "--- PM2 PROZESSE ---\n" . trim($pm2List) . "\n\n";
+    $out .= "--- LETZTE 20 WATCHDOG LOGS ---\n" . trim($lastLogs) . "\n";
+
+    sendNtfyPush($ntfyTopic, "📱 Log-Abfrage per iOS Kurzbefehl", "Systembericht wurde erfolgreich generiert und übertragen.", "high", "mag,iphone,page_facing_up");
+    echo $out;
 }
 ?>

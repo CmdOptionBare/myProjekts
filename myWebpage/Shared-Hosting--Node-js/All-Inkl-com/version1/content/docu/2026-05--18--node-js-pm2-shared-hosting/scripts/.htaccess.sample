@@ -1,0 +1,19 @@
+#AuthUserFile /www/htdocs/ACCOUNT_ID/DEINE-DOMAIN/.htpasswd
+#AuthGroupFile /dev/null
+#AuthName "Bitte Benutzer und Passwort eingeben"
+#AuthType Basic
+#require valid-user
+
+DirectoryIndex disabled
+RewriteEngine On
+
+# Emergency watchdog & notifier scripts: always execute as PHP, never proxy
+RewriteCond %{REQUEST_URI} ^/(cron_pm2|notifier)\.php
+RewriteRule ^ - [L]
+
+# If port_b_active.flag exists -> new instance (Port 3005) is live and ready
+RewriteCond %{DOCUMENT_ROOT}/port_b_active.flag -f
+RewriteRule ^(.*)$ http://127.0.0.1:3005%{REQUEST_URI} [P,L]
+
+# Default: route to Port 3004 (instance A)
+RewriteRule ^(.*)$ http://127.0.0.1:3004%{REQUEST_URI} [P,L]
