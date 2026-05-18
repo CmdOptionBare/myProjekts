@@ -1,0 +1,27 @@
+# .htaccess – Flip-Flop Reverse Proxy für Node.js auf All-Inkl
+# Anonymisierte Version – für eigene Domain und Account-ID anpassen.
+#
+# Voraussetzung: mod_rewrite und mod_proxy auf dem Shared Hosting aktiv.
+# Getestet auf: All-Inkl.com (Apache 2.4, PHP 8.x)
+#
+# Variablen zum Ersetzen:
+#   DEINE-DOMAIN   → deine tatsächliche Domain (z.B. example.de)
+#   PORT_A         → Primärer Node.js Port (z.B. 3004)
+#   PORT_B         → Sekundärer Node.js Port (z.B. 3005)
+
+# 1. DirectoryIndex ZWINGEND deaktivieren (MUSS erste Zeile sein!)
+DirectoryIndex disabled
+RewriteEngine On
+
+# 2. Watchdog-Skript: IMMER direkt als PHP ausführen, NIE proxieren.
+#    Wenn Node.js down ist, muss das Skript erreichbar bleiben!
+RewriteCond %{REQUEST_URI} ^/cron_pm2\.php
+RewriteRule ^ - [L]
+
+# 3. Wenn port_b_active.flag existiert → prod-B (PORT_B) ist live und ready
+#    Apache routet erst dann zu PORT_B, wenn das Flag-File vorhanden ist.
+RewriteCond %{DOCUMENT_ROOT}/port_b_active.flag -f
+RewriteRule ^(.*)$ http://127.0.0.1:PORT_B%{REQUEST_URI} [P,L]
+
+# 4. Standard-Routing: prod-A (PORT_A)
+RewriteRule ^(.*)$ http://127.0.0.1:PORT_A%{REQUEST_URI} [P,L]
