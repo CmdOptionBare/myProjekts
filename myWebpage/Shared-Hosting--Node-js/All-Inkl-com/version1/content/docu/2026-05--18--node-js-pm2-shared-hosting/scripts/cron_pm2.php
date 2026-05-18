@@ -8,9 +8,11 @@
  * The normal flip-flop rotation is handled by orchestrator.js (via PM2).
  */
 
-$appDir    = "/www/htdocs/ACCOUNT_ID/DEINE-DOMAIN/app/.next/standalone";
-$orchFile  = "/www/htdocs/ACCOUNT_ID/DEINE-DOMAIN/orchestrator.js";
-$flagB     = "/www/htdocs/ACCOUNT_ID/DEINE-DOMAIN/port_b_active.flag";
+$webroot   = "/www/htdocs/ACCOUNT_ID/DEINE-DOMAIN";
+$appDir    = $webroot . "/app/.next/standalone";
+$orchFile  = $webroot . "/orchestrator.js";
+$notifier  = $webroot . "/notifier.php";
+$flagB     = $webroot . "/port_b_active.flag";
 $pm2       = "/www/htdocs/ACCOUNT_ID/nodejs_current/bin/pm2";
 $homeDir   = "/www/htdocs/ACCOUNT_ID";
 $env       = "export HOME=$homeDir; export PATH=/www/htdocs/ACCOUNT_ID/nodejs_current/bin:\$PATH; ";
@@ -28,6 +30,13 @@ $files = glob("$logDir/watchdog-*.log");
 if (is_array($files) && count($files) > 31) {
   rsort($files);
   foreach (array_slice($files, 31) as $f) { if (is_file($f)) unlink($f); }
+}
+
+// Täglicher Statusbericht: Versand um 23:50 Uhr
+$dailyFlag = "$logDir/daily_sent_$today.flag";
+if (date("H:i") >= "23:50" && !file_exists($dailyFlag)) {
+  file_put_contents($dailyFlag, "1");
+  shell_exec("php " . escapeshellarg($notifier) . " daily > /dev/null 2>&1 &");
 }
 
 // --- Step 1: Check both ports ---
@@ -55,6 +64,9 @@ if ($portA_ok || $portB_ok) {
 // --- Step 3: EMERGENCY - Both ports are dead, restart everything ---
 file_put_contents($logFile, "[$ts] EMERGENCY: Both ports dead. Restarting orchestrator.\n", FILE_APPEND);
 echo "EMERGENCY: Both ports dead. Restarting...\n";
+
+// Asynchroner Notfall-E-Mail-Versand im Hintergrund (blockiert nicht!)
+shell_exec("php " . escapeshellarg($notifier) . " emergency > /dev/null 2>&1 &");
 
 // Delete any dead state individually so PM2 never aborts early
 $outA = shell_exec($env . "$pm2 delete prod-A 2>&1; true");
