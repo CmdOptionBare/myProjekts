@@ -13,15 +13,15 @@
 DirectoryIndex disabled
 RewriteEngine On
 
-# 2. Watchdog-Skript: IMMER direkt als PHP ausführen, NIE proxieren.
-#    Wenn Node.js down ist, muss das Skript erreichbar bleiben!
-RewriteCond %{REQUEST_URI} ^/cron_pm2\.php
+# 2. Watchdog- & Notifier-Skript: IMMER direkt als PHP ausführen, NIE proxieren.
+#    Wenn Node.js down ist, müssen diese Skripte erreichbar bleiben!
+RewriteCond %{REQUEST_URI} ^/(cron_pm2|notifier)\.php
 RewriteRule ^ - [L]
 
 # 3. Wenn port_b_active.flag existiert → prod-B (PORT_B) ist live und ready
 #    Apache routet erst dann zu PORT_B, wenn das Flag-File vorhanden ist.
 RewriteCond %{DOCUMENT_ROOT}/port_b_active.flag -f
-RewriteRule ^(.*)$ http://127.0.0.1:PORT_B%{REQUEST_URI} [P,L]
+RewriteRule ^(.*)$ http://127.0.0.1:3005%{REQUEST_URI} [P,L]
 
 # 4. Standard-Routing: prod-A (PORT_A)
-RewriteRule ^(.*)$ http://127.0.0.1:PORT_A%{REQUEST_URI} [P,L]
+RewriteRule ^(.*)$ http://127.0.0.1:3004%{REQUEST_URI} [P,L]
